@@ -8,14 +8,11 @@ from typing import List, Dict, Optional
 # Configuration / secrets
 # -------------------------
 def get_api_key() -> Optional[str]:
-    # First try Streamlit secrets (when deployed)
     try:
         if "TMDB_API_KEY" in st.secrets:
             return st.secrets["TMDB_API_KEY"]
     except Exception:
-        # st.secrets may raise if not available locally
         pass
-    # Fallback to environment variable for local dev
     return os.getenv("TMDB_API_KEY")
 
 API_KEY = get_api_key()
@@ -35,7 +32,6 @@ if not API_KEY:
 # Helper functions
 # -------------------------
 def tmdb_get(path: str, params: dict = None, retries: int = 2) -> dict:
-    """GET request to TMDB with simple retry logic."""
     if params is None:
         params = {}
     params["api_key"] = API_KEY
@@ -48,7 +44,6 @@ def tmdb_get(path: str, params: dict = None, retries: int = 2) -> dict:
         except requests.RequestException:
             if attempt < retries:
                 continue
-            # return empty dict so caller can handle gracefully
             return {}
 
 def search_movies(query: str, page: int = 1) -> List[Dict]:
@@ -94,7 +89,6 @@ with col1:
 with col2:
     search_btn = st.button("Search")
 
-# store last chosen movie in session_state so we can display consistently
 if "selected_movie_id" not in st.session_state:
     st.session_state["selected_movie_id"] = None
 if "selected_movie_title" not in st.session_state:
@@ -106,7 +100,6 @@ if search_btn and query:
     if not results:
         st.warning("No results found on TMDB. Try a different query.")
     else:
-        # prepare display options
         options = []
         id_map = {}
         for r in results[:10]:
@@ -115,29 +108,32 @@ if search_btn and query:
             label = f"{title} ({year})" if year else title
             options.append(label)
             id_map[label] = r.get("id")
+
         choice = st.selectbox("Select exact movie", ["-- pick one --"] + options)
         if choice != "-- pick one --":
-            chosen_id = id_map.get(choice)
-            st.session_state["selected_movie_id"] = chosen_id
+            st.session_state["selected_movie_id"] = id_map.get(choice)
             st.session_state["selected_movie_title"] = choice
 
-# If a movie is selected (from selectbox or previous session state), fetch similar
 movie_id = st.session_state.get("selected_movie_id")
-movie_title = st.session_state.get("selected_movie_title")
 
 if movie_id:
-    # Show chosen movie header
     with st.spinner("Fetching movie details..."):
         base = fetch_movie_by_id(movie_id)
+
     if base:
-        st.subheader(f"Recommendations for: {base['title']} {f'({base.get(\"release_date\",\"\")[:4]})' if base.get('release_date') else ''}")
-        # fetch similar movies
+        release_year = base.get("release_date", "")[:4]
+        header = base['title']
+        if release_year:
+            header += f" ({release_year})"
+
+        st.subheader(f"Recommendations for: {header}")
+
         with st.spinner("Fetching similar movies from TMDB..."):
             recs = fetch_similar_movies(movie_id, topn=5)
+
         if not recs:
             st.info("TMDB returned no similar movies. Try another title or search again.")
         else:
-            # Grid view: 5 columns
             cols = st.columns(5)
             for i, rec in enumerate(recs):
                 with cols[i]:
@@ -151,6 +147,5 @@ if movie_id:
     else:
         st.error("Could not fetch movie details. Try again.")
 
-# Footer / tips
 st.markdown("---")
 st.write("Tips: If you don't see good matches in the popular pool, try a more exact search (include year).")
