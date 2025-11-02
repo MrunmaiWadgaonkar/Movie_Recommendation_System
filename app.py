@@ -1,4 +1,3 @@
-# app.py
 import streamlit as st
 import requests
 import pandas as pd
@@ -9,14 +8,8 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import re
 
-# ----------------------
-# Configuration / Secrets
-# ----------------------
-API_KEY = None
-if "TMDB_API_KEY" in st.secrets:
-    API_KEY = st.secrets["TMDB_API_KEY"]
-else:
-    API_KEY = os.getenv("TMDB_API_KEY")
+
+API_KEY = os.getenv("TMDB_API_KEY")
 
 if not API_KEY:
     st.error("TMDB API key not found. Set TMDB_API_KEY in Streamlit secrets or as an environment variable.")
@@ -24,9 +17,6 @@ if not API_KEY:
 
 BASE_URL = "https://api.themoviedb.org/3"
 
-# ----------------------
-# Utilities
-# ----------------------
 def tmdb_get(path, params=None, retries=2, backoff=0.3):
     if params is None:
         params = {}
@@ -57,9 +47,6 @@ def clean_text(s):
     s = re.sub(r"\s+", " ", s).strip()
     return s
 
-# ----------------------
-# Data preparation & caching
-# ----------------------
 @st.cache_data(show_spinner=False)
 def fetch_popular_movies(max_pages=3):
     movies = []
@@ -107,9 +94,6 @@ def build_model(enriched_movies):
     sim = cosine_similarity(vectors)
     return df.reset_index(drop=True), tfidf, sim
 
-# ----------------------
-# Recommendation functions
-# ----------------------
 def recommend_from_pool(df, sim_matrix, title, topn=5):
     matches = df[df["title"].str.lower() == title.lower()]
     if matches.empty:
@@ -139,13 +123,9 @@ def tmdb_fetch_similar(movie_id, topn=5):
         "poster": fetch_poster_path(r)
     } for r in data.get("results", [])[:topn]]
 
-# ----------------------
-# UI
-# ----------------------
 st.set_page_config(page_title="Movie Recommender", layout="wide")
 st.title("🎬 Content-Based Movie Recommender")
 
-# Default pool size (sidebar removed)
 PAGE_COUNT = 3
 
 with st.spinner("Fetching movies..."):
