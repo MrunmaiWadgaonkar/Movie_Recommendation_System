@@ -1,8 +1,6 @@
 venv/
-similarity.pkl
-movie_list.pkl
-tmdb_5000_credits.csv
 *.pyc
 __pycache__/
 .env
-*.toml
+*.pkl
+*.csv
