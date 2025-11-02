@@ -60,3 +60,7 @@ User must manually download:
 # 🤝 Contributions
 Suggestions and improvements are welcome!  
 
+---------------------------------------------------------------------------------------------------------------------------------------------------
+
+Link: https://movierecommendationsystem-3shahpcn4tegqfq72nss6p.streamlit.app/#recommendations-for-our-fault
+
