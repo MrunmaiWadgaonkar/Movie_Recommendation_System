@@ -1,151 +1,214 @@
 # app.py
 import streamlit as st
 import requests
+import pandas as pd
+import numpy as np
 import os
-from typing import List, Dict, Optional
+import time
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import re
 
-# -------------------------
-# Configuration / secrets
-# -------------------------
-def get_api_key() -> Optional[str]:
-    try:
-        if "TMDB_API_KEY" in st.secrets:
-            return st.secrets["TMDB_API_KEY"]
-    except Exception:
-        pass
-    return os.getenv("TMDB_API_KEY")
-
-API_KEY = get_api_key()
-BASE_URL = "https://api.themoviedb.org/3"
-IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
+# ----------------------
+# Configuration / Secrets
+# ----------------------
+API_KEY = None
+if "TMDB_API_KEY" in st.secrets:
+    API_KEY = st.secrets["TMDB_API_KEY"]
+else:
+    API_KEY = os.getenv("TMDB_API_KEY")
 
 if not API_KEY:
-    st.title("Movie Recommender")
-    st.error(
-        "TMDB API key not found. Add `TMDB_API_KEY` to Streamlit Secrets (recommended) "
-        "or export it as an environment variable locally."
-    )
-    st.info("Streamlit Cloud: Manage app → Secrets. Locally: export TMDB_API_KEY='your_key'")
+    st.error("TMDB API key not found. Set TMDB_API_KEY in Streamlit secrets or as an environment variable.")
     st.stop()
 
-# -------------------------
-# Helper functions
-# -------------------------
-def tmdb_get(path: str, params: dict = None, retries: int = 2) -> dict:
+BASE_URL = "https://api.themoviedb.org/3"
+
+# ----------------------
+# Utilities
+# ----------------------
+def tmdb_get(path, params=None, retries=2, backoff=0.3):
     if params is None:
         params = {}
     params["api_key"] = API_KEY
     url = f"{BASE_URL}{path}"
-    for attempt in range(retries + 1):
+    for attempt in range(retries+1):
         try:
             resp = requests.get(url, params=params, timeout=10)
             resp.raise_for_status()
             return resp.json()
-        except requests.RequestException:
+        except Exception:
             if attempt < retries:
+                time.sleep(backoff * (attempt+1))
                 continue
-            return {}
+            raise
 
-def search_movies(query: str, page: int = 1) -> List[Dict]:
-    data = tmdb_get("/search/movie", {"query": query, "page": page})
-    return data.get("results", []) if isinstance(data, dict) else []
+def fetch_poster_path(movie):
+    poster_path = movie.get("poster_path")
+    if poster_path:
+        return f"https://image.tmdb.org/t/p/w500{poster_path}"
+    return None
 
-def fetch_similar_movies(movie_id: int, topn: int = 5) -> List[Dict]:
-    data = tmdb_get(f"/movie/{movie_id}/similar", {"page": 1})
-    results = data.get("results", []) if isinstance(data, dict) else []
-    out = []
-    for r in results[:topn]:
-        out.append({
-            "title": r.get("title") or r.get("name"),
-            "poster": IMAGE_BASE + r["poster_path"] if r.get("poster_path") else None,
-            "id": r.get("id"),
-            "release_date": r.get("release_date") or r.get("first_air_date", "")
+def clean_text(s):
+    if not isinstance(s, str):
+        return ""
+    s = s.lower()
+    s = re.sub(r"[^a-z0-9\s]", " ", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s
+
+# ----------------------
+# Data preparation & caching
+# ----------------------
+@st.cache_data(show_spinner=False)
+def fetch_popular_movies(max_pages=3):
+    movies = []
+    for page in range(1, max_pages + 1):
+        data = tmdb_get("/movie/popular", {"page": page})
+        movies.extend(data.get("results", []))
+        time.sleep(0.1)
+    return movies
+
+@st.cache_data(show_spinner=False)
+def enrich_movie_details(movie_ids):
+    enriched = []
+    for mid in movie_ids:
+        path = f"/movie/{mid}"
+        params = {"append_to_response": "credits,keywords"}
+        try:
+            d = tmdb_get(path, params)
+        except Exception:
+            continue
+
+        genres = [g.get("name","") for g in d.get("genres", [])]
+        overview = d.get("overview", "") or ""
+        keywords = [k.get("name","") for k in d.get("keywords", {}).get("keywords", [])]
+        cast = [c.get("name","") for c in d.get("credits", {}).get("cast", [])[:5]]
+        director = [c.get("name","") for c in d.get("credits", {}).get("crew", []) if c.get("job") == "Director"]
+
+        tags = " ".join(genres + keywords + cast + director + [overview])
+        enriched.append({
+            "movie_id": d.get("id"),
+            "title": d.get("title"),
+            "tags": clean_text(tags),
+            "overview": overview,
+            "poster": fetch_poster_path(d)
         })
-    return out
+        time.sleep(0.08)
+    return enriched
 
-def fetch_movie_by_id(movie_id: int) -> Optional[Dict]:
-    d = tmdb_get(f"/movie/{movie_id}")
-    if not d:
-        return None
-    return {
-        "title": d.get("title"),
-        "id": d.get("id"),
-        "poster": IMAGE_BASE + d["poster_path"] if d.get("poster_path") else None,
-        "overview": d.get("overview", ""),
-        "release_date": d.get("release_date", "")
-    }
+@st.cache_resource(show_spinner=False)
+def build_model(enriched_movies):
+    df = pd.DataFrame(enriched_movies).drop_duplicates(subset=["movie_id"])
+    if df.empty:
+        return df, None, None
+    tfidf = TfidfVectorizer(max_features=5000, stop_words="english")
+    vectors = tfidf.fit_transform(df["tags"].fillna(""))
+    sim = cosine_similarity(vectors)
+    return df.reset_index(drop=True), tfidf, sim
 
-# -------------------------
-# Streamlit UI
-# -------------------------
+# ----------------------
+# Recommendation functions
+# ----------------------
+def recommend_from_pool(df, sim_matrix, title, topn=5):
+    matches = df[df["title"].str.lower() == title.lower()]
+    if matches.empty:
+        matches = df[df["title"].str.lower().str.contains(title.lower())]
+        if matches.empty:
+            return []
+    idx = matches.index[0]
+    distances = sorted(list(enumerate(sim_matrix[idx])), key=lambda x: x[1], reverse=True)
+    recs = []
+    for i, score in distances[1: topn+1]:
+        recs.append({
+            "title": df.loc[i, "title"],
+            "movie_id": df.loc[i, "movie_id"],
+            "poster": df.loc[i, "poster"]
+        })
+    return recs
+
+def tmdb_search_movies(query, page=1):
+    data = tmdb_get("/search/movie", {"query": query, "page": page})
+    return data.get("results", [])
+
+def tmdb_fetch_similar(movie_id, topn=5):
+    data = tmdb_get(f"/movie/{movie_id}/similar", {"page":1})
+    return [{
+        "title": r.get("title"),
+        "movie_id": r.get("id"),
+        "poster": fetch_poster_path(r)
+    } for r in data.get("results", [])[:topn]]
+
+# ----------------------
+# UI
+# ----------------------
 st.set_page_config(page_title="Movie Recommender", layout="wide")
-st.title("🎬 Movie Recommender — Search & Similar")
+st.title("🎬 Content-Based Movie Recommender")
 
-st.write("Type a movie name, press **Search**, pick the exact match (if multiple), and see 5 similar movies.")
+# Default pool size (sidebar removed)
+PAGE_COUNT = 3
 
-col1, col2 = st.columns([3, 1])
+with st.spinner("Fetching movies..."):
+    popular = fetch_popular_movies(max_pages=PAGE_COUNT)
+popular_ids = [m["id"] for m in popular]
+
+with st.spinner("Analyzing movies..."):
+    enriched = enrich_movie_details(popular_ids)
+df, tfidf_model, sim_matrix = build_model(enriched)
+
+popular_titles = list(df["title"]) if df is not None else []
+
+col1, col2 = st.columns([3, 2])
 with col1:
-    query = st.text_input("Search movie title (e.g. Inception)", value="")
+    selected_movie = st.selectbox("Pick a popular movie", options=[""] + popular_titles)
 with col2:
-    search_btn = st.button("Search")
+    query = st.text_input("Or search movie title")
 
-if "selected_movie_id" not in st.session_state:
-    st.session_state["selected_movie_id"] = None
-if "selected_movie_title" not in st.session_state:
-    st.session_state["selected_movie_title"] = None
+search_btn = st.button("Search")
 
 if search_btn and query:
-    with st.spinner("Searching TMDB..."):
-        results = search_movies(query)
+    results = tmdb_search_movies(query)
     if not results:
-        st.warning("No results found on TMDB. Try a different query.")
+        st.warning("No results found.")
     else:
-        options = []
-        id_map = {}
-        for r in results[:10]:
-            title = r.get("title") or r.get("name")
-            year = (r.get("release_date") or r.get("first_air_date") or "")[:4]
-            label = f"{title} ({year})" if year else title
-            options.append(label)
-            id_map[label] = r.get("id")
+        options = {
+            f'{r["title"]} ({(r.get("release_date") or "")[:4]})': r
+            for r in results[:7]
+        }
+        choice = st.selectbox("Select movie", options.keys())
+        chosen = options[choice]
+        selected_movie = chosen["title"]
+        recs = tmdb_fetch_similar(chosen["id"], topn=5)
 
-        choice = st.selectbox("Select exact movie", ["-- pick one --"] + options)
-        if choice != "-- pick one --":
-            st.session_state["selected_movie_id"] = id_map.get(choice)
-            st.session_state["selected_movie_title"] = choice
+        st.subheader(f"Recommendations for {chosen['title']} (TMDB Similar)")
+        cols = st.columns(5)
+        for i, r in enumerate(recs):
+            with cols[i]:
+                st.text(r["title"])
+                if r["poster"]:
+                    st.image(r["poster"], use_column_width=True)
+        st.stop()
 
-movie_id = st.session_state.get("selected_movie_id")
-
-if movie_id:
-    with st.spinner("Fetching movie details..."):
-        base = fetch_movie_by_id(movie_id)
-
-    if base:
-        release_year = base.get("release_date", "")[:4]
-        header = base['title']
-        if release_year:
-            header += f" ({release_year})"
-
-        st.subheader(f"Recommendations for: {header}")
-
-        with st.spinner("Fetching similar movies from TMDB..."):
-            recs = fetch_similar_movies(movie_id, topn=5)
-
-        if not recs:
-            st.info("TMDB returned no similar movies. Try another title or search again.")
-        else:
+if selected_movie:
+    if any(df["title"].str.lower() == selected_movie.lower()):
+        recs = recommend_from_pool(df, sim_matrix, selected_movie, topn=5)
+        st.subheader(f"Recommendations for {selected_movie}")
+        cols = st.columns(5)
+        for i, r in enumerate(recs):
+            with cols[i]:
+                st.text(r["title"])
+                if r["poster"]:
+                    st.image(r["poster"], use_column_width=True)
+    else:
+        sr = tmdb_search_movies(selected_movie)
+        if sr:
+            recs = tmdb_fetch_similar(sr[0]["id"], topn=5)
+            st.subheader(f"Recommendations for {selected_movie}")
             cols = st.columns(5)
-            for i, rec in enumerate(recs):
+            for i, r in enumerate(recs):
                 with cols[i]:
-                    st.text(rec["title"])
-                    if rec["poster"]:
-                        st.image(rec["poster"], use_column_width=True)
-                    else:
-                        st.write("Poster unavailable")
-                    if rec.get("release_date"):
-                        st.caption(rec["release_date"][:10])
-    else:
-        st.error("Could not fetch movie details. Try again.")
-
-st.markdown("---")
-st.write("Tips: If you don't see good matches in the popular pool, try a more exact search (include year).")
+                    st.text(r["title"])
+                    if r["poster"]:
+                        st.image(r["poster"], use_column_width=True)
+        else:
+            st.warning("No results found on TMDB.")
