@@ -1,6 +1,33 @@
+# Virtual environments
 venv/
-*.pyc
+.env/
+.venv/
+
+# Python bytecode & cache
 __pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Environment & Secrets
 .env
+*.env
+*.key
+*.token
+
+# VS Code workspace settings
+*.code-workspace
+.vscode/
+
+# Data files (local only, not for repo)
 *.pkl
 *.csv
+*.db
+
+# OS / Editor junk files
+.DS_Store
+Thumbs.db
+*.log
