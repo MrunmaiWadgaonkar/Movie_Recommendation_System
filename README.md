@@ -1,5 +1,10 @@
 ## Movie_Recommendation_System
 
+# Team Member: Mrunmai Wadgaonkar
+# Reg No: 2023bit049
+# Roll No: I46
+
+
 # 📌 Overview
 
 This project is a **Movie Recommendation System** that suggests similar movies based on metadata such as genres, keywords, cast, and movie overview. 
