@@ -1,8 +1,8 @@
-## Movie_Recommendation_System
+# Movie_Recommendation_System
 
-# Team Member: Mrunmai Wadgaonkar
-# Reg No: 2023bit049
-# Roll No: I46
+## Team Member: Mrunmai Wadgaonkar
+## Reg No: 2023bit049
+## Roll No: I46
 
 
 # 📌 Overview
