@@ -10,6 +10,7 @@
 This project is a **Movie Recommendation System** that suggests similar movies based on metadata such as genres, keywords, cast, and movie overview. 
 It uses **content-based filtering** with TF-IDF vectorization and **cosine similarity** to find movies most similar to a user-selected film.
 
+
 ---------------------------------------------------------------------------------------------------------------------------------------------------
 
 # 🗂️ Folder Structure
@@ -62,8 +63,13 @@ User must manually download:
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------
 
-# 🤝 Contributions
-Suggestions and improvements are welcome!  
+# My Contribution
+I implemented:
+-> Complete API integration and request handling
+-> Text preprocessing and tag generation logic
+-> TF-IDF model creation and similarity scoring
+-> Streamlit frontend and caching optimization
+-> Secure deployment setup (no hardcoded API keys)
 
 ---------------------------------------------------------------------------------------------------------------------------------------------------
 
